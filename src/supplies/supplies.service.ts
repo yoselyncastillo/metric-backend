@@ -1,0 +1,506 @@
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { EntityManager, Repository } from 'typeorm';
+import { CreateBatchDto } from './dto/create-batch.dto';
+import { CreateSupplyDto } from './dto/create-supply.dto';
+import { CreateUnitConversionDto } from './dto/create-unit-conversion.dto';
+import { UpdateSupplyDto } from './dto/update-supply.dto';
+import { UpdateUnitConversionDto } from './dto/update-unit-conversion.dto';
+import { InventoryBatch } from './entities/inventory-batch.entity';
+import { Supply } from './entities/supply.entity';
+import { UnitConversion } from './entities/unit-conversion.entity';
+
+export type SupplyWithTotalAvailable = Supply & { totalAvailable: number };
+
+export type ConsumptionResult = {
+  totalCost: number;
+  consumedQuantity: number;
+  insufficientStock: boolean;
+};
+
+export type SupplyPricingResult = {
+  fifoCost: number;
+  replacementCost: number;
+  averageCost: number;
+  stockWarning: boolean;
+};
+
+@Injectable()
+export class SuppliesService {
+  constructor(
+    @InjectRepository(Supply)
+    private readonly suppliesRepository: Repository<Supply>,
+    @InjectRepository(InventoryBatch)
+    private readonly inventoryBatchesRepository: Repository<InventoryBatch>,
+    @InjectRepository(UnitConversion)
+    private readonly unitConversionsRepository: Repository<UnitConversion>,
+  ) {}
+
+  async create(createSupplyDto: CreateSupplyDto): Promise<Supply> {
+    const { name, unit, initialQuantity, costPerUnit } = createSupplyDto;
+    const quantity = String(initialQuantity);
+    const unitCost = String(costPerUnit);
+
+    return this.suppliesRepository.manager.transaction(async (manager) => {
+      const supply = manager.create(Supply, { name, unit });
+      await manager.save(Supply, supply);
+
+      const batch = manager.create(InventoryBatch, {
+        supply,
+        initialQuantity: quantity,
+        remainingQuantity: quantity,
+        costPerUnit: unitCost,
+      });
+      await manager.save(InventoryBatch, batch);
+
+      supply.batches = [batch];
+      return supply;
+    });
+  }
+
+  async findAll(): Promise<SupplyWithTotalAvailable[]> {
+    const supplies = await this.suppliesRepository.find({
+      order: { id: 'ASC' },
+      relations: { batches: true },
+    });
+    return supplies.map((supply) => this.withTotalAvailable(supply));
+  }
+
+  async addBatch(
+    supplyId: number,
+    createBatchDto: CreateBatchDto,
+  ): Promise<InventoryBatch> {
+    const supply = await this.suppliesRepository.findOne({
+      where: { id: supplyId },
+    });
+    if (!supply) {
+      throw new NotFoundException(`Supply #${supplyId} not found`);
+    }
+
+    const quantity = String(createBatchDto.initialQuantity);
+    const unitCost = String(createBatchDto.costPerUnit);
+
+    const batch = this.inventoryBatchesRepository.create({
+      supply,
+      initialQuantity: quantity,
+      remainingQuantity: quantity,
+      costPerUnit: unitCost,
+    });
+
+    return this.inventoryBatchesRepository.save(batch);
+  }
+
+  async addConversion(
+    supplyId: number,
+    dto: CreateUnitConversionDto,
+  ): Promise<UnitConversion> {
+    const supply = await this.suppliesRepository.findOne({
+      where: { id: supplyId },
+    });
+    if (!supply) {
+      throw new NotFoundException(`Supply #${supplyId} not found`);
+    }
+
+    const conversion = this.unitConversionsRepository.create({
+      name: dto.name,
+      factor: String(dto.factor),
+      supply,
+    });
+
+    return this.unitConversionsRepository.save(conversion);
+  }
+
+  async updateConversion(
+    conversionId: number,
+    dto: UpdateUnitConversionDto,
+  ): Promise<UnitConversion> {
+    const conversion = await this.unitConversionsRepository.findOne({
+      where: { id: conversionId },
+    });
+    if (!conversion) {
+      throw new NotFoundException(
+        `Unit conversion #${conversionId} not found`,
+      );
+    }
+
+    if (dto.name !== undefined) {
+      conversion.name = dto.name;
+    }
+    if (dto.factor !== undefined) {
+      conversion.factor = String(dto.factor);
+    }
+
+    return this.unitConversionsRepository.save(conversion);
+  }
+
+  async removeConversion(conversionId: number): Promise<void> {
+    const conversion = await this.unitConversionsRepository.findOne({
+      where: { id: conversionId },
+    });
+    if (!conversion) {
+      throw new NotFoundException(
+        `Unit conversion #${conversionId} not found`,
+      );
+    }
+    const recipesUsingConversion =
+      await this.findRecipeNamesUsingConversion(conversionId);
+    if (recipesUsingConversion.length > 0) {
+      throw new BadRequestException(
+        `Cannot delete unit conversion #${conversionId} because it is used in recipes: ${recipesUsingConversion.join(
+          ', ',
+        )}`,
+      );
+    }
+    await this.unitConversionsRepository.remove(conversion);
+  }
+
+  private async findRecipeNamesUsingConversion(
+    conversionId: number,
+  ): Promise<string[]> {
+    const manager = this.unitConversionsRepository.manager;
+    const tableExists = await manager.query(
+      `SELECT to_regclass('public.recipe_ingredients') AS table_name`,
+    );
+    if (!tableExists?.[0]?.table_name) {
+      return [];
+    }
+
+    const ingredientCols = await manager.query(
+      `SELECT column_name
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'recipe_ingredients'`,
+    );
+    const ingredientColNames = new Set<string>(
+      ingredientCols.map((row: { column_name: string }) => row.column_name),
+    );
+    const conversionCol = this.pickColumn(
+      ingredientColNames,
+      'unitConversionId',
+      'unit_conversion_id',
+      'conversionId',
+      'conversion_id',
+    );
+    if (!conversionCol) {
+      return [];
+    }
+    const recipeIdCol = this.pickColumn(
+      ingredientColNames,
+      'recipeId',
+      'recipe_id',
+    );
+
+    if (!recipeIdCol) {
+      const usedRows = await manager.query(
+        `SELECT 1
+           FROM recipe_ingredients ri
+          WHERE ri."${conversionCol}" = $1
+          LIMIT 1`,
+        [conversionId],
+      );
+      return usedRows.length > 0 ? ['(unknown recipe)'] : [];
+    }
+
+    const recipesExists = await manager.query(
+      `SELECT to_regclass('public.recipes') AS table_name`,
+    );
+    if (!recipesExists?.[0]?.table_name) {
+      const ids = await manager.query(
+        `SELECT DISTINCT ri."${recipeIdCol}"::text AS recipe_ref
+           FROM recipe_ingredients ri
+          WHERE ri."${conversionCol}" = $1`,
+        [conversionId],
+      );
+      return ids.map((row: { recipe_ref: string }) => `Recipe #${row.recipe_ref}`);
+    }
+
+    const recipeCols = await manager.query(
+      `SELECT column_name
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'recipes'`,
+    );
+    const recipeColNames = new Set<string>(
+      recipeCols.map((row: { column_name: string }) => row.column_name),
+    );
+    const recipePkCol = this.pickColumn(recipeColNames, 'id');
+    const recipeNameCol = this.pickColumn(recipeColNames, 'name', 'title');
+
+    if (!recipePkCol || !recipeNameCol) {
+      const ids = await manager.query(
+        `SELECT DISTINCT ri."${recipeIdCol}"::text AS recipe_ref
+           FROM recipe_ingredients ri
+          WHERE ri."${conversionCol}" = $1`,
+        [conversionId],
+      );
+      return ids.map((row: { recipe_ref: string }) => `Recipe #${row.recipe_ref}`);
+    }
+
+    const rows = await manager.query(
+      `SELECT DISTINCT r."${recipeNameCol}"::text AS recipe_name
+         FROM recipe_ingredients ri
+         JOIN recipes r
+           ON r."${recipePkCol}" = ri."${recipeIdCol}"
+        WHERE ri."${conversionCol}" = $1`,
+      [conversionId],
+    );
+    return rows.map((row: { recipe_name: string }) => row.recipe_name);
+  }
+
+  private pickColumn(candidates: Set<string>, ...names: string[]): string | null {
+    for (const name of names) {
+      if (candidates.has(name)) {
+        return name;
+      }
+    }
+    return null;
+  }
+
+  async findOne(id: number): Promise<SupplyWithTotalAvailable> {
+    const supply = await this.suppliesRepository.findOne({
+      where: { id },
+      relations: { batches: true },
+    });
+    if (!supply) {
+      throw new NotFoundException(`Supply #${id} not found`);
+    }
+    return this.withTotalAvailable(supply);
+  }
+
+  async getAmountInBaseUnit(
+    supplyId: number,
+    amount: number,
+    unitName: string,
+  ): Promise<number> {
+    if (amount < 0) {
+      throw new BadRequestException('amount must be >= 0');
+    }
+
+    const normalizedUnitName = unitName.trim().toLowerCase();
+    const supply = await this.suppliesRepository.findOne({
+      where: { id: supplyId },
+    });
+    if (!supply) {
+      throw new NotFoundException(`Supply #${supplyId} not found`);
+    }
+
+    if (normalizedUnitName === supply.unit.toLowerCase()) {
+      return amount;
+    }
+
+    const conversion = (supply.unitConversions ?? []).find(
+      (item) => item.name.trim().toLowerCase() === normalizedUnitName,
+    );
+    if (!conversion) {
+      throw new BadRequestException(
+        `Unit "${unitName}" is not configured for supply "${supply.name}"`,
+      );
+    }
+
+    return amount * Number(conversion.factor);
+  }
+
+  private withTotalAvailable(supply: Supply): SupplyWithTotalAvailable {
+    const batches = supply.batches ?? [];
+    const totalAvailable = batches.reduce(
+      (sum, batch) => sum + Number(batch.remainingQuantity),
+      0,
+    );
+    return Object.assign(supply, { totalAvailable });
+  }
+
+  async processConsumption(
+    supplyId: number,
+    quantityToConsume: number,
+    executeDiscount: boolean,
+  ): Promise<ConsumptionResult> {
+    if (quantityToConsume < 0) {
+      throw new BadRequestException('quantityToConsume must be >= 0');
+    }
+    if (quantityToConsume === 0) {
+      return { totalCost: 0, consumedQuantity: 0, insufficientStock: false };
+    }
+
+    const supplyRow = await this.suppliesRepository.findOne({
+      where: { id: supplyId },
+      select: { id: true },
+    });
+    if (!supplyRow) {
+      throw new NotFoundException(`Supply #${supplyId} not found`);
+    }
+
+    if (executeDiscount) {
+      return this.inventoryBatchesRepository.manager.transaction(
+        async (manager) => {
+          const batches = await this.loadPositiveBatchesForFifo(
+            manager,
+            supplyId,
+            true,
+          );
+          const { touched, ...result } = this.fifoAllocate(
+            batches,
+            quantityToConsume,
+          );
+          for (const { batch, newRemainingStr } of touched) {
+            batch.remainingQuantity = newRemainingStr;
+          }
+          if (touched.length > 0) {
+            await manager.save(
+              InventoryBatch,
+              touched.map((t) => t.batch),
+            );
+          }
+          return result;
+        },
+      );
+    }
+
+    const batches = await this.loadPositiveBatchesForFifo(
+      this.inventoryBatchesRepository.manager,
+      supplyId,
+      false,
+    );
+    const { touched: _touched, ...result } = this.fifoAllocate(
+      batches,
+      quantityToConsume,
+    );
+    return result;
+  }
+
+  async getSupplyPricing(
+    id: number,
+    quantity: number,
+  ): Promise<SupplyPricingResult> {
+    if (quantity < 0) {
+      throw new BadRequestException('quantity must be >= 0');
+    }
+
+    const supplyRow = await this.suppliesRepository.findOne({
+      where: { id },
+      select: { id: true },
+    });
+    if (!supplyRow) {
+      throw new NotFoundException(`Supply #${id} not found`);
+    }
+
+    const batchesWithStock = await this.loadPositiveBatchesForFifo(
+      this.inventoryBatchesRepository.manager,
+      id,
+      false,
+    );
+
+    const totalStock = batchesWithStock.reduce(
+      (sum, batch) => sum + Number(batch.remainingQuantity),
+      0,
+    );
+    const stockWarning = quantity > totalStock;
+
+    const { totalCost: fifoCost } = this.fifoAllocate(
+      batchesWithStock,
+      quantity,
+    );
+
+    const latestBatch = await this.inventoryBatchesRepository
+      .createQueryBuilder('batch')
+      .where('batch.supplyId = :id', { id })
+      .orderBy('batch.createdAt', 'DESC')
+      .getOne();
+
+    const replacementCost = latestBatch
+      ? quantity * Number(latestBatch.costPerUnit)
+      : 0;
+
+    let averageCost = 0;
+    if (totalStock > 0) {
+      const inventoryValue = batchesWithStock.reduce(
+        (sum, batch) =>
+          sum +
+          Number(batch.remainingQuantity) * Number(batch.costPerUnit),
+        0,
+      );
+      const weightedAvgPerUnit = inventoryValue / totalStock;
+      averageCost = weightedAvgPerUnit * quantity;
+    }
+
+    return {
+      fifoCost,
+      replacementCost,
+      averageCost,
+      stockWarning,
+    };
+  }
+
+  private async loadPositiveBatchesForFifo(
+    manager: EntityManager,
+    supplyId: number,
+    forUpdate: boolean,
+  ): Promise<InventoryBatch[]> {
+    const qb = manager
+      .createQueryBuilder(InventoryBatch, 'batch')
+      .where('batch.supplyId = :supplyId', { supplyId })
+      .andWhere('"batch"."remainingQuantity"::numeric > 0')
+      .orderBy('batch.createdAt', 'ASC');
+    if (forUpdate) {
+      qb.setLock('pessimistic_write');
+    }
+    return qb.getMany();
+  }
+
+  private fifoAllocate(
+    batches: InventoryBatch[],
+    quantityToConsume: number,
+  ): ConsumptionResult & {
+    touched: Array<{ batch: InventoryBatch; newRemainingStr: string }>;
+  } {
+    const totalStock = batches.reduce(
+      (sum, batch) => sum + Number(batch.remainingQuantity),
+      0,
+    );
+
+    let remainingNeed = quantityToConsume;
+    let totalCost = 0;
+    let consumedQuantity = 0;
+    const touched: Array<{ batch: InventoryBatch; newRemainingStr: string }> =
+      [];
+
+    for (const batch of batches) {
+      if (remainingNeed <= 0) {
+        break;
+      }
+      const batchRem = Number(batch.remainingQuantity);
+      if (batchRem <= 0) {
+        continue;
+      }
+      const take = Math.min(batchRem, remainingNeed);
+      totalCost += take * Number(batch.costPerUnit);
+      consumedQuantity += take;
+      remainingNeed -= take;
+      touched.push({
+        batch,
+        newRemainingStr: (batchRem - take).toFixed(4),
+      });
+    }
+
+    return {
+      totalCost,
+      consumedQuantity,
+      insufficientStock: quantityToConsume > totalStock,
+      touched,
+    };
+  }
+
+  async update(id: number, updateSupplyDto: UpdateSupplyDto) {
+    const supply = await this.findOne(id);
+    this.suppliesRepository.merge(supply, updateSupplyDto);
+    return this.suppliesRepository.save(supply);
+  }
+
+  async remove(id: number) {
+    const supply = await this.findOne(id);
+    await this.suppliesRepository.remove(supply);
+  }
+}
