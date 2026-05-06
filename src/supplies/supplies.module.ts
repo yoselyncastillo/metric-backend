@@ -10,5 +10,6 @@ import { SuppliesService } from './supplies.service';
   imports: [TypeOrmModule.forFeature([Supply, InventoryBatch, UnitConversion])],
   controllers: [SuppliesController],
   providers: [SuppliesService],
+  exports: [SuppliesService],
 })
 export class SuppliesModule {}

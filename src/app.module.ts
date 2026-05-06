@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { SuppliesModule } from './supplies/supplies.module';
+import { RecipesModule } from './recipes/recipes.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { SuppliesModule } from './supplies/supplies.module';
       synchronize: true, // TODO: Remove in production
     }),
     SuppliesModule,
+    RecipesModule,
   ],
 })
 export class AppModule {}

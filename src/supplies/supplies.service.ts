@@ -374,10 +374,14 @@ export class SuppliesService {
   async getSupplyPricing(
     id: number,
     quantity: number,
+    unitName?: string,
   ): Promise<SupplyPricingResult> {
     if (quantity < 0) {
       throw new BadRequestException('quantity must be >= 0');
     }
+    const quantityInBaseUnit = unitName
+      ? await this.getAmountInBaseUnit(id, quantity, unitName)
+      : quantity;
 
     const supplyRow = await this.suppliesRepository.findOne({
       where: { id },
@@ -397,11 +401,11 @@ export class SuppliesService {
       (sum, batch) => sum + Number(batch.remainingQuantity),
       0,
     );
-    const stockWarning = quantity > totalStock;
+    const stockWarning = quantityInBaseUnit > totalStock;
 
     const { totalCost: fifoCost } = this.fifoAllocate(
       batchesWithStock,
-      quantity,
+      quantityInBaseUnit,
     );
 
     const latestBatch = await this.inventoryBatchesRepository
@@ -411,7 +415,7 @@ export class SuppliesService {
       .getOne();
 
     const replacementCost = latestBatch
-      ? quantity * Number(latestBatch.costPerUnit)
+      ? quantityInBaseUnit * Number(latestBatch.costPerUnit)
       : 0;
 
     let averageCost = 0;
@@ -423,7 +427,7 @@ export class SuppliesService {
         0,
       );
       const weightedAvgPerUnit = inventoryValue / totalStock;
-      averageCost = weightedAvgPerUnit * quantity;
+      averageCost = weightedAvgPerUnit * quantityInBaseUnit;
     }
 
     return {
@@ -503,4 +507,28 @@ export class SuppliesService {
     const supply = await this.findOne(id);
     await this.suppliesRepository.remove(supply);
   }
+
+async decreaseStock(
+  supplyId: number, 
+  amount: number, 
+  unit: string, 
+  manager: EntityManager
+) {
+  const amountInBaseUnit = await this.getAmountInBaseUnit(supplyId, amount, unit);
+
+  const batches = await this.loadPositiveBatchesForFifo(manager, supplyId, true);
+  const { touched, insufficientStock } = this.fifoAllocate(batches, amountInBaseUnit);
+
+  if (insufficientStock) {
+    throw new BadRequestException(`Stock insuficiente para el insumo ID ${supplyId}`);
+  }
+
+  for (const { batch, newRemainingStr } of touched) {
+    batch.remainingQuantity = newRemainingStr;
+  }
+
+  if (touched.length > 0) {
+    await manager.save(InventoryBatch, touched.map((t) => t.batch));
+  }
+}
 }
