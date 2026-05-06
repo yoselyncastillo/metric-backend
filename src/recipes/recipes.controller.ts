@@ -21,7 +21,7 @@ export class RecipesController {
     return this.recipesService.create(createRecipeDto);
   }
 
-  @Post('calculate-costs')
+  @Post('preview-costs')
   calculateCosts(
     @Body(
       new ParseArrayPipe({

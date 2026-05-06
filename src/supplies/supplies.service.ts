@@ -13,6 +13,8 @@ import { UpdateUnitConversionDto } from './dto/update-unit-conversion.dto';
 import { InventoryBatch } from './entities/inventory-batch.entity';
 import { Supply } from './entities/supply.entity';
 import { UnitConversion } from './entities/unit-conversion.entity';
+import { StoresService } from 'src/stores/stores.service';
+import { Store } from 'src/stores/entities/store.entity';
 
 export type SupplyWithTotalAvailable = Supply & { totalAvailable: number };
 
@@ -38,6 +40,7 @@ export class SuppliesService {
     private readonly inventoryBatchesRepository: Repository<InventoryBatch>,
     @InjectRepository(UnitConversion)
     private readonly unitConversionsRepository: Repository<UnitConversion>,
+    private readonly storesService: StoresService,
   ) {}
 
   async create(createSupplyDto: CreateSupplyDto): Promise<Supply> {
@@ -81,11 +84,17 @@ export class SuppliesService {
       throw new NotFoundException(`Supply #${supplyId} not found`);
     }
 
+    let store: Store | undefined;
+    if (createBatchDto.storeId) {
+      store = await this.storesService.findOne(createBatchDto.storeId);
+    }
+
     const quantity = String(createBatchDto.initialQuantity);
     const unitCost = String(createBatchDto.costPerUnit);
 
     const batch = this.inventoryBatchesRepository.create({
       supply,
+      ...(store ? { store } : {}),
       initialQuantity: quantity,
       remainingQuantity: quantity,
       costPerUnit: unitCost,
@@ -263,7 +272,7 @@ export class SuppliesService {
   async findOne(id: number): Promise<SupplyWithTotalAvailable> {
     const supply = await this.suppliesRepository.findOne({
       where: { id },
-      relations: { batches: true },
+      relations: { batches: { store: true }, unitConversions: true },
     });
     if (!supply) {
       throw new NotFoundException(`Supply #${id} not found`);

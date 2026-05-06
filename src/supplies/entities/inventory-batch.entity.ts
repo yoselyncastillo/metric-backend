@@ -7,6 +7,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { Supply } from './supply.entity';
+import { Store } from '../../stores/entities/store.entity';
 
 @Entity('inventory_batches')
 export class InventoryBatch {
@@ -30,4 +31,11 @@ export class InventoryBatch {
   })
   @JoinColumn({ name: 'supplyId' })
   supply: Supply;
+
+  @ManyToOne(() => Store, (store) => store.batches, {
+    nullable: true,
+    onDelete: 'SET NULL'
+  })
+  @JoinColumn({ name: 'storeId' })
+  store: Store;
 }

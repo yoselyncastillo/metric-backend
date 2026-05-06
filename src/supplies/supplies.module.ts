@@ -5,9 +5,13 @@ import { Supply } from './entities/supply.entity';
 import { UnitConversion } from './entities/unit-conversion.entity';
 import { SuppliesController } from './supplies.controller';
 import { SuppliesService } from './supplies.service';
+import { StoresModule } from 'src/stores/stores.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Supply, InventoryBatch, UnitConversion])],
+  imports: [
+    TypeOrmModule.forFeature([Supply, InventoryBatch, UnitConversion]),
+    StoresModule,
+],
   controllers: [SuppliesController],
   providers: [SuppliesService],
   exports: [SuppliesService],

@@ -13,5 +13,6 @@ import { RecipesController } from './recipes.controller';
   ],
   controllers: [RecipesController],
   providers: [RecipesService],
+  exports: [RecipesService],
 })
 export class RecipesModule {}

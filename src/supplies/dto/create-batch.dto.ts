@@ -11,4 +11,9 @@ export class CreateBatchDto {
   @IsNumber()
   @IsPositive()
   costPerUnit: number;
+
+  @Type(() => Number)
+  @IsNumber()
+  @IsPositive()
+  storeId: number;
 }
