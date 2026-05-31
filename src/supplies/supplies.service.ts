@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, MoreThan, Repository } from 'typeorm';
 import { CreateBatchDto } from './dto/create-batch.dto';
 import { CreateSupplyDto } from './dto/create-supply.dto';
 import { CreateUnitConversionDto } from './dto/create-unit-conversion.dto';
@@ -77,36 +77,6 @@ export class SuppliesService {
     });
     return supplies.map((supply) => this.withTotalAvailable(supply));
   }
-
-  // async addBatch(
-  //   supplyId: number,
-  //   createBatchDto: CreateBatchDto,
-  // ): Promise<InventoryBatch> {
-  //   const supply = await this.suppliesRepository.findOne({
-  //     where: { id: supplyId },
-  //   });
-  //   if (!supply) {
-  //     throw new NotFoundException(`Supply #${supplyId} not found`);
-  //   }
-
-  //   let store: Store | undefined;
-  //   if (createBatchDto.storeId) {
-  //     store = await this.storesService.findOne(createBatchDto.storeId);
-  //   }
-
-  //   const quantity = String(createBatchDto.initialQuantity);
-  //   const unitCost = String(createBatchDto.costPerUnit);
-
-  //   const batch = this.inventoryBatchesRepository.create({
-  //     supply,
-  //     ...(store ? { store } : {}),
-  //     initialQuantity: quantity,
-  //     remainingQuantity: quantity,
-  //     costPerUnit: unitCost,
-  //   });
-
-  //   return this.inventoryBatchesRepository.save(batch);
-  // }
 
   async addBatch(
     supplyId: number,
@@ -583,26 +553,37 @@ export class SuppliesService {
     amount: number,
     unit: string,
     manager: EntityManager
-  ) {
-    const amountInBaseUnit = await this.getAmountInBaseUnit(supplyId, amount, unit);
-
+  ): Promise<SupplyPricingResult> {
+    // 1. REUSO: Conversión de unidades
+    const quantityInBaseUnit = await this.getAmountInBaseUnit(supplyId, amount, unit);
+  
+    // 2. REUSO: Carga de lotes con bloqueo (pessimistic_write) para evitar colisiones
     const batches = await this.loadPositiveBatchesForFifo(manager, supplyId, true);
-    const { touched, insufficientStock } = this.fifoAllocate(batches, amountInBaseUnit);
-
+  
+    // 3. REUSO: Lógica FIFO (calcula costos y prepara los registros 'touched')
+    const { totalCost: fifoCost, insufficientStock, touched } = this.fifoAllocate(
+      batches,
+      quantityInBaseUnit,
+    );
+  
     if (insufficientStock) {
       throw new BadRequestException(`Stock insuficiente para el insumo ID ${supplyId}`);
     }
-
+  
+    // 4. PERSISTENCIA: Guardamos los cambios que calculó fifoAllocate
     for (const { batch, newRemainingStr } of touched) {
       batch.remainingQuantity = newRemainingStr;
     }
-
     if (touched.length > 0) {
       await manager.save(InventoryBatch, touched.map((t) => t.batch));
     }
+  
+    // 5. REUSO DE COSTOS: Obtenemos los 3 costos usando tu función actual
+    // (Nota: Como ya estamos en una transacción, esta consulta es segura)
+    const pricing = await this.getSupplyPricing(supplyId, quantityInBaseUnit);
+  
+    return pricing; // Devolvemos fifoCost, replacementCost y averageCost
   }
-
-  // En src/supplies/supplies.service.ts
 
   async createFormat(dto: CreateSupplyFormatDto) {
     const supply = await this.suppliesRepository.findOne({
