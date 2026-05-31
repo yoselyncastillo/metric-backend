@@ -15,6 +15,8 @@ import { Supply } from './entities/supply.entity';
 import { UnitConversion } from './entities/unit-conversion.entity';
 import { StoresService } from 'src/stores/stores.service';
 import { Store } from 'src/stores/entities/store.entity';
+import { SupplyFormat } from './entities/supply-format.entity';
+import { CreateSupplyFormatDto } from './dto/create-supply-format.dto';
 
 export type SupplyWithTotalAvailable = Supply & { totalAvailable: number };
 
@@ -40,23 +42,26 @@ export class SuppliesService {
     private readonly inventoryBatchesRepository: Repository<InventoryBatch>,
     @InjectRepository(UnitConversion)
     private readonly unitConversionsRepository: Repository<UnitConversion>,
+    @InjectRepository(SupplyFormat)
+    private readonly supplyFormatsRepository: Repository<SupplyFormat>,
     private readonly storesService: StoresService,
-  ) {}
+  ) { }
 
   async create(createSupplyDto: CreateSupplyDto): Promise<Supply> {
-    const { name, unit, initialQuantity, costPerUnit } = createSupplyDto;
+    const { name, unit, initialQuantity, totalPaid } = createSupplyDto;
     const quantity = String(initialQuantity);
-    const unitCost = String(costPerUnit);
 
     return this.suppliesRepository.manager.transaction(async (manager) => {
       const supply = manager.create(Supply, { name, unit });
       await manager.save(Supply, supply);
 
+      const calculatedCostPerUnit = totalPaid / initialQuantity;
+
       const batch = manager.create(InventoryBatch, {
         supply,
         initialQuantity: quantity,
         remainingQuantity: quantity,
-        costPerUnit: unitCost,
+        costPerUnit: String(calculatedCostPerUnit),
       });
       await manager.save(InventoryBatch, batch);
 
@@ -73,10 +78,46 @@ export class SuppliesService {
     return supplies.map((supply) => this.withTotalAvailable(supply));
   }
 
+  // async addBatch(
+  //   supplyId: number,
+  //   createBatchDto: CreateBatchDto,
+  // ): Promise<InventoryBatch> {
+  //   const supply = await this.suppliesRepository.findOne({
+  //     where: { id: supplyId },
+  //   });
+  //   if (!supply) {
+  //     throw new NotFoundException(`Supply #${supplyId} not found`);
+  //   }
+
+  //   let store: Store | undefined;
+  //   if (createBatchDto.storeId) {
+  //     store = await this.storesService.findOne(createBatchDto.storeId);
+  //   }
+
+  //   const quantity = String(createBatchDto.initialQuantity);
+  //   const unitCost = String(createBatchDto.costPerUnit);
+
+  //   const batch = this.inventoryBatchesRepository.create({
+  //     supply,
+  //     ...(store ? { store } : {}),
+  //     initialQuantity: quantity,
+  //     remainingQuantity: quantity,
+  //     costPerUnit: unitCost,
+  //   });
+
+  //   return this.inventoryBatchesRepository.save(batch);
+  // }
+
   async addBatch(
     supplyId: number,
     createBatchDto: CreateBatchDto,
   ): Promise<InventoryBatch> {
+
+    if (!createBatchDto.supplyFormatId && !createBatchDto.initialQuantity) {
+      throw new BadRequestException('Debes proporcionar un formatId o una initialQuantity');
+    }
+
+    // 1. Validar que el insumo exista
     const supply = await this.suppliesRepository.findOne({
       where: { id: supplyId },
     });
@@ -84,23 +125,43 @@ export class SuppliesService {
       throw new NotFoundException(`Supply #${supplyId} not found`);
     }
 
-    let store: Store | undefined;
+    // 2. Buscar la tienda (si viene en el DTO)
+    let store: Store | undefined = undefined;
     if (createBatchDto.storeId) {
       store = await this.storesService.findOne(createBatchDto.storeId);
     }
 
-    const quantity = String(createBatchDto.initialQuantity);
-    const unitCost = String(createBatchDto.costPerUnit);
+    // 3. Determinar la CANTIDAD (Prioridad: Formato > Manual)
+    let finalQuantity = Number(createBatchDto.initialQuantity);
 
+    if (createBatchDto.supplyFormatId) {
+      const format = await this.supplyFormatsRepository.findOne({
+        where: { id: createBatchDto.supplyFormatId },
+      });
+      if (!format) {
+        throw new NotFoundException(`Format #${createBatchDto.supplyFormatId} not found`);
+      }
+      // Si hay formato, usamos su cantidad (ej. 900)
+      finalQuantity = Number(format.quantity);
+    }
+
+    // 4. Calcular el COSTO POR UNIDAD BASE (gr/ml/und)
+    // Si pagaste 10$ por 900g, el costo unitario es 10 / 900 = 0.0111
+    // Esto es lo que permite que el FIFO funcione aunque cambies de marca
+    const totalPaid = Number(createBatchDto.totalPaid);
+    const costPerUnitBase = totalPaid / finalQuantity;
+
+    // 5. Crear el lote
     const batch = this.inventoryBatchesRepository.create({
       supply,
-      ...(store ? { store } : {}),
-      initialQuantity: quantity,
-      remainingQuantity: quantity,
-      costPerUnit: unitCost,
+      store,
+      initialQuantity: String(finalQuantity),
+      remainingQuantity: String(finalQuantity),
+      costPerUnit: String(costPerUnitBase),
+      // Podrías guardar el supplyFormatId aquí también si quisieras trazabilidad total
     });
 
-    return this.inventoryBatchesRepository.save(batch);
+    return await this.inventoryBatchesRepository.save(batch);
   }
 
   async addConversion(
@@ -517,27 +578,47 @@ export class SuppliesService {
     await this.suppliesRepository.remove(supply);
   }
 
-async decreaseStock(
-  supplyId: number, 
-  amount: number, 
-  unit: string, 
-  manager: EntityManager
-) {
-  const amountInBaseUnit = await this.getAmountInBaseUnit(supplyId, amount, unit);
+  async decreaseStock(
+    supplyId: number,
+    amount: number,
+    unit: string,
+    manager: EntityManager
+  ) {
+    const amountInBaseUnit = await this.getAmountInBaseUnit(supplyId, amount, unit);
 
-  const batches = await this.loadPositiveBatchesForFifo(manager, supplyId, true);
-  const { touched, insufficientStock } = this.fifoAllocate(batches, amountInBaseUnit);
+    const batches = await this.loadPositiveBatchesForFifo(manager, supplyId, true);
+    const { touched, insufficientStock } = this.fifoAllocate(batches, amountInBaseUnit);
 
-  if (insufficientStock) {
-    throw new BadRequestException(`Stock insuficiente para el insumo ID ${supplyId}`);
+    if (insufficientStock) {
+      throw new BadRequestException(`Stock insuficiente para el insumo ID ${supplyId}`);
+    }
+
+    for (const { batch, newRemainingStr } of touched) {
+      batch.remainingQuantity = newRemainingStr;
+    }
+
+    if (touched.length > 0) {
+      await manager.save(InventoryBatch, touched.map((t) => t.batch));
+    }
   }
 
-  for (const { batch, newRemainingStr } of touched) {
-    batch.remainingQuantity = newRemainingStr;
-  }
+  // En src/supplies/supplies.service.ts
 
-  if (touched.length > 0) {
-    await manager.save(InventoryBatch, touched.map((t) => t.batch));
+  async createFormat(dto: CreateSupplyFormatDto) {
+    const supply = await this.suppliesRepository.findOne({
+      where: { id: dto.supplyId }
+    });
+
+    if (!supply) {
+      throw new NotFoundException(`Supply #${dto.supplyId} not found`);
+    }
+
+    const format = this.supplyFormatsRepository.create({
+      name: dto.name,
+      quantity: String(dto.quantity),
+      supply: supply,
+    });
+
+    return await this.supplyFormatsRepository.save(format);
   }
-}
 }

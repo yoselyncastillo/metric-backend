@@ -17,5 +17,5 @@ export class CreateSupplyDto {
   @Type(() => Number)
   @IsNumber()
   @IsPositive()
-  costPerUnit: number;
+  totalPaid: number;
 }

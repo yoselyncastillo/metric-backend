@@ -4,9 +4,12 @@ import { SeedController } from './seed.controller';
 import { RecipesModule } from 'src/recipes/recipes.module';
 import { StoresModule } from 'src/stores/stores.module';
 import { SuppliesModule } from 'src/supplies/supplies.module';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { SupplyFormat } from 'src/supplies/entities/supply-format.entity';
 
 @Module({
   imports: [
+    TypeOrmModule.forFeature([SupplyFormat]),
     StoresModule,
     SuppliesModule, 
     RecipesModule

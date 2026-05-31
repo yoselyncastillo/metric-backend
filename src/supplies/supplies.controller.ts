@@ -19,10 +19,11 @@ import { CreateSupplyDto } from './dto/create-supply.dto';
 import { CreateUnitConversionDto } from './dto/create-unit-conversion.dto';
 import { UpdateSupplyDto } from './dto/update-supply.dto';
 import { UpdateUnitConversionDto } from './dto/update-unit-conversion.dto';
+import { CreateSupplyFormatDto } from './dto/create-supply-format.dto';
 
 @Controller('supplies')
 export class SuppliesController {
-  constructor(private readonly suppliesService: SuppliesService) {}
+  constructor(private readonly suppliesService: SuppliesService) { }
 
   @Post()
   create(@Body() createSupplyDto: CreateSupplyDto) {
@@ -34,8 +35,13 @@ export class SuppliesController {
     return this.suppliesService.findAll();
   }
 
+  @Post('formats')
+  createFormat(@Body() createFormatDto: CreateSupplyFormatDto) {
+    return this.suppliesService.createFormat(createFormatDto);
+  }
+
   @Post(':id/batches')
-  addBatch(
+  addBatch( 
     @Param('id') id: string,
     @Body() createBatchDto: CreateBatchDto,
   ) {
