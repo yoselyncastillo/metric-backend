@@ -1,5 +1,6 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, UpdateDateColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, UpdateDateColumn, JoinColumn } from 'typeorm';
 import { Recipe } from '../../recipes/entities/recipe.entity';
+import { User } from '../../auth/entities/user.entity';
 
 @Entity()
 export class FinishedProduct {
@@ -26,4 +27,8 @@ export class FinishedProduct {
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  @ManyToOne(() => User, { eager: false, nullable: true })
+  @JoinColumn({ name: 'user_id' })
+  user: User;
 }

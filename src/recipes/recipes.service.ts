@@ -7,6 +7,7 @@ import { UpdateRecipeDto } from './dto/update-recipe.dto';
 import { RecipeIngredient } from './entities/recipe-ingredient.entity';
 import { Recipe } from './entities/recipe.entity';
 import { Supply } from '../supplies/entities/supply.entity';
+import { User } from '../auth/entities/user.entity';
 
 export type PreviewIngredientCost = CreateRecipeIngredientDto & {
   fifoCost: number;
@@ -26,12 +27,13 @@ export type PreviewCostsResult = {
 
 @Injectable()
 export class RecipesService {
-  private async findRecipeWithRelations(id: number): Promise<Recipe> {
+  private async findRecipeWithRelations(id: number, user: User): Promise<Recipe> {
     const recipe = await this.recipesRepository
       .createQueryBuilder('recipe')
       .leftJoinAndSelect('recipe.ingredients', 'ingredient')
       .leftJoinAndSelect('ingredient.supply', 'supply')
       .where('recipe.id = :id', { id })
+      .andWhere('recipe.user_id = :userId', { userId: user.id })
       .getOne();
     if (!recipe) {
       throw new NotFoundException(`Recipe #${id} not found`);
@@ -48,7 +50,7 @@ export class RecipesService {
     private readonly dataSource: DataSource
   ) {}
 
-  async create(createRecipeDto: CreateRecipeDto) {
+  async create(createRecipeDto: CreateRecipeDto, user: User) {
     const { ingredients, ...recipeData } = createRecipeDto;
     const ingredientList = ingredients ?? [];
 
@@ -60,12 +62,13 @@ export class RecipesService {
           recipeData.profitMargin !== undefined
             ? String(recipeData.profitMargin)
             : '1.4',
+        user
       });
       await manager.save(Recipe, recipe);
 
       const uniqueSupplyIds = [...new Set(ingredientList.map((i) => i.supplyId))];
       const supplies = uniqueSupplyIds.length
-        ? await manager.findBy(Supply, { id: In(uniqueSupplyIds) })
+        ? await manager.findBy(Supply, { id: In(uniqueSupplyIds), user: { id: user.id } })
         : [];
       const supplyById = new Map(supplies.map((supply) => [supply.id, supply]));
       const missingSupplyIds = uniqueSupplyIds.filter((id) => !supplyById.has(id));
@@ -76,14 +79,14 @@ export class RecipesService {
       }
 
       const ingredientsToSave = ingredientList.map((ingredientDto) =>
-        this.buildRecipeIngredient(recipe, ingredientDto, supplyById),
+        this.buildRecipeIngredient(recipe, ingredientDto, supplyById, user),
       );
       if (ingredientsToSave.length > 0) {
         await manager.save(RecipeIngredient, ingredientsToSave);
       }
 
       const createdRecipe = await manager.findOne(Recipe, {
-        where: { id: recipe.id },
+        where: { id: recipe.id, user: { id: user.id } },
         relations: { ingredients: { supply: true } },
       });
       if (!createdRecipe) {
@@ -93,18 +96,19 @@ export class RecipesService {
     });
   }
 
-  findAll() {
+  findAll(user: User) {
     return this.recipesRepository
       .createQueryBuilder('recipe')
       .leftJoinAndSelect('recipe.ingredients', 'ingredient')
       .leftJoinAndSelect('ingredient.supply', 'supply')
+      .where('recipe.user_id = :userId', { userId: user.id })
       .orderBy('recipe.id', 'ASC')
       .addOrderBy('ingredient.id', 'ASC')
       .getMany();
   }
 
-  async findOne(id: number) {
-    const recipe = await this.findRecipeWithRelations(id);
+  async findOne(id: number, user: User) {
+    const recipe = await this.findRecipeWithRelations(id, user);
 
     let totalFifoCost = 0;
     let totalReplacementCost = 0;
@@ -114,6 +118,7 @@ export class RecipesService {
       const pricing = await this.suppliesService.getSupplyPricing(
         item.supply.id,
         Number(item.quantity),
+        user,
         item.unit,
       );
       totalFifoCost += pricing.fifoCost;
@@ -136,6 +141,7 @@ export class RecipesService {
 
   async calculatePreviewCosts(
     ingredients: CreateRecipeIngredientDto[],
+    user: User
   ): Promise<PreviewCostsResult> {
     const ingredientList = ingredients ?? [];
     const items = await Promise.all(
@@ -143,6 +149,7 @@ export class RecipesService {
         const pricing = await this.suppliesService.getSupplyPricing(
           item.supplyId,
           item.quantity,
+          user,
           item.unit,
         );
         return {
@@ -172,8 +179,8 @@ export class RecipesService {
     return { items, totals };
   }
 
-  async update(id: number, updateRecipeDto: UpdateRecipeDto) {
-    const recipe = await this.findRecipeWithRelations(id);
+  async update(id: number, updateRecipeDto: UpdateRecipeDto, user: User) {
+    const recipe = await this.findRecipeWithRelations(id, user);
     const { ingredients: _ignoredIngredients, ...recipePatch } = updateRecipeDto;
     this.recipesRepository.merge(recipe, {
       ...recipePatch,
@@ -185,8 +192,8 @@ export class RecipesService {
     return this.recipesRepository.save(recipe);
   }
 
-  async remove(id: number) {
-    const recipe = await this.findRecipeWithRelations(id);
+  async remove(id: number, user: User) {
+    const recipe = await this.findRecipeWithRelations(id, user);
     await this.recipesRepository.remove(recipe);
   }
 
@@ -198,6 +205,7 @@ export class RecipesService {
     recipe: Recipe,
     ingredientDto: CreateRecipeIngredientDto,
     supplyById: Map<number, Supply>,
+    user: User
   ): RecipeIngredient {
     const supply = supplyById.get(ingredientDto.supplyId);
     if (!supply) {
@@ -210,13 +218,14 @@ export class RecipesService {
       supply,
       quantity: String(ingredientDto.quantity),
       unit: ingredientDto.unit,
+      user
     });
   }
 
-  async produce(id: number, desiredPortions: number) {
+  async produce(id: number, desiredPortions: number, user: User) {
     return await this.dataSource.transaction(async (manager) => {
       const recipe = await manager.findOne(Recipe, {
-        where: { id },
+        where: { id, user: { id: user.id } },
         relations: { ingredients: { supply: true } }
       });
 
@@ -231,7 +240,8 @@ export class RecipesService {
           item.supply.id, 
           neededAmount, 
           item.unit, 
-          manager
+          manager,
+          user
         );
       }
 

@@ -5,6 +5,7 @@ import { RecipesService } from 'src/recipes/recipes.service';
 import { SuppliesService } from 'src/supplies/supplies.service';
 import { DataSource } from 'typeorm';
 import { FinishedProduct } from './entities/finished-product.entity';
+import { User } from '../auth/entities/user.entity';
 
 @Injectable()
 export class ProductionService {
@@ -14,9 +15,9 @@ export class ProductionService {
     private readonly suppliesService: SuppliesService,
   ) { }
 
-  async executeProduction(recipeId: number, quantityToProduce: number, realQuantity?: number) {
+  async executeProduction(recipeId: number, quantityToProduce: number, user: User, realQuantity?: number) {
     return await this.dataSource.transaction(async (manager) => {
-      const recipe = await this.recipesService.findOne(recipeId);
+      const recipe = await this.recipesService.findOne(recipeId, user);
       if (!recipe) throw new NotFoundException(`Receta #${recipeId} no encontrada`);
       // El "Factor de Escala" (Ej: Si quiero 6 y la receta es de 12, el factor es 0.5)
       const scaleFactor = quantityToProduce / recipe.portions; 
@@ -36,7 +37,8 @@ export class ProductionService {
           ingredient.supply.id,
           proportionalQuantity,
           ingredient.unit,
-          manager
+          manager,
+          user
         );
 
         totalFifoCost += pricing.fifoCost;
@@ -46,7 +48,7 @@ export class ProductionService {
 
       // 2. Actualizar o crear Producto Terminado
       let finishedProduct = await manager.findOne(FinishedProduct, {
-        where: { recipe: { id: recipeId } }
+        where: { recipe: { id: recipeId }, user: { id: user.id } }
       });
 
       if (finishedProduct) {
@@ -73,7 +75,8 @@ export class ProductionService {
           quantity: finalQuantityForStock.toString(),
           fifoCost: totalFifoCost.toString(),
           replacementCost: totalReplacementCost.toString(),
-          averageCost: totalAverageCost.toString()
+          averageCost: totalAverageCost.toString(),
+          user
         });
       }
 
@@ -81,29 +84,30 @@ export class ProductionService {
     });
   }
 
-  async findAllFinished() {
+  async findAllFinished(user: User) {
     return await this.dataSource.getRepository(FinishedProduct).find({
+      where: { user: { id: user.id } },
       relations: ['recipe'],
     });
   }
 
-  create(createProductionDto: CreateProductionDto) {
+  create(createProductionDto: CreateProductionDto, user: User) {
     return 'This action adds a new production';
   }
 
-  findAll() {
+  findAll(user: User) {
     return `This action returns all production`;
   }
 
-  findOne(id: number) {
+  findOne(id: number, user: User) {
     return `This action returns a #${id} production`;
   }
 
-  update(id: number, updateProductionDto: UpdateProductionDto) {
+  update(id: number, updateProductionDto: UpdateProductionDto, user: User) {
     return `This action updates a #${id} production`;
   }
 
-  remove(id: number) {
+  remove(id: number, user: User) {
     return `This action removes a #${id} production`;
   }
 }

@@ -1,6 +1,7 @@
-import { Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, ManyToOne, OneToMany, PrimaryGeneratedColumn, JoinColumn } from 'typeorm';
 import { InventoryBatch } from './inventory-batch.entity';
 import { UnitConversion } from './unit-conversion.entity';
+import { User } from '../../auth/entities/user.entity';
 
 @Entity('supplies')
 export class Supply {
@@ -18,4 +19,8 @@ export class Supply {
 
   @OneToMany(() => UnitConversion, (uc) => uc.supply, { eager: true })
   unitConversions: UnitConversion[];
+
+  @ManyToOne(() => User, { eager: false, nullable: true })
+  @JoinColumn({ name: 'user_id' })
+  user: User;
 }

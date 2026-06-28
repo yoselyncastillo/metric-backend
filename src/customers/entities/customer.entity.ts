@@ -1,4 +1,5 @@
-import { Entity, PrimaryGeneratedColumn, Column } from "typeorm";
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from "typeorm";
+import { User } from "../../auth/entities/user.entity";
 
 @Entity()
 export class Customer {
@@ -16,4 +17,8 @@ export class Customer {
 
   @Column({ default: false })
   isFrequent: boolean;
+
+  @ManyToOne(() => User, { eager: false, nullable: true })
+  @JoinColumn({ name: 'user_id' })
+  user: User;
 }

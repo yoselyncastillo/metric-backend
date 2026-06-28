@@ -1,4 +1,5 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn } from "typeorm";
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn } from "typeorm";
+import { User } from "../../auth/entities/user.entity";
 
 export enum ExpenseCategory {
   UTILITIES = 'UTILITIES',
@@ -24,4 +25,8 @@ export class ExtraExpense {
 
   @CreateDateColumn()
   date: Date;
+
+  @ManyToOne(() => User, { eager: false, nullable: true })
+  @JoinColumn({ name: 'user_id' })
+  user: User;
 }

@@ -1,6 +1,7 @@
 import { Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { Supply } from '../../supplies/entities/supply.entity';
 import { Recipe } from './recipe.entity';
+import { User } from '../../auth/entities/user.entity';
 
 @Entity('recipe_ingredients')
 export class RecipeIngredient {
@@ -22,4 +23,8 @@ export class RecipeIngredient {
   @ManyToOne(() => Supply, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'supplyId' })
   supply: Supply;
+
+  @ManyToOne(() => User, { eager: false, nullable: true })
+  @JoinColumn({ name: 'user_id' })
+  user: User;
 }

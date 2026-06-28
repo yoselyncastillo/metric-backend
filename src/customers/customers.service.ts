@@ -4,6 +4,7 @@ import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Customer } from './entities/customer.entity';
+import { User } from '../auth/entities/user.entity';
 
 @Injectable()
 export class CustomersService {
@@ -13,26 +14,33 @@ export class CustomersService {
     private readonly customerRepository: Repository<Customer>,
   ) {}
 
-  create(createCustomerDto: CreateCustomerDto) {
-    const customer = this.customerRepository.create(createCustomerDto);
+  create(createCustomerDto: CreateCustomerDto, user: User) {
+    const customer = this.customerRepository.create({ ...createCustomerDto, user });
     return this.customerRepository.save(customer);
   }
 
-  findAll() {
-    return this.customerRepository.find();
+  findAll(user: User) {
+    return this.customerRepository.find({
+      where: { user: { id: user.id } }
+    });
   }
 
-  async findOne(id: number) {
-    const customer = await this.customerRepository.findOneBy({ id });
+  async findOne(id: number, user: User) {
+    const customer = await this.customerRepository.findOne({
+      where: { id, user: { id: user.id } }
+    });
     if (!customer) throw new NotFoundException(`Cliente #${id} no encontrado`);
     return customer;
   }
 
-  update(id: number, updateCustomerDto: UpdateCustomerDto) {
-    return `This action updates a #${id} customer`;
+  async update(id: number, updateCustomerDto: UpdateCustomerDto, user: User) {
+    const customer = await this.findOne(id, user);
+    this.customerRepository.merge(customer, updateCustomerDto);
+    return this.customerRepository.save(customer);
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} customer`;
+  async remove(id: number, user: User) {
+    const customer = await this.findOne(id, user);
+    return this.customerRepository.remove(customer);
   }
 }

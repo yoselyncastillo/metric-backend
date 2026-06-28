@@ -17,6 +17,7 @@ import { StoresService } from 'src/stores/stores.service';
 import { Store } from 'src/stores/entities/store.entity';
 import { SupplyFormat } from './entities/supply-format.entity';
 import { CreateSupplyFormatDto } from './dto/create-supply-format.dto';
+import { User } from '../auth/entities/user.entity';
 
 export type SupplyWithTotalAvailable = Supply & { totalAvailable: number };
 
@@ -47,12 +48,12 @@ export class SuppliesService {
     private readonly storesService: StoresService,
   ) { }
 
-  async create(createSupplyDto: CreateSupplyDto): Promise<Supply> {
+  async create(createSupplyDto: CreateSupplyDto, user: User): Promise<Supply> {
     const { name, unit, initialQuantity, totalPaid } = createSupplyDto;
     const quantity = String(initialQuantity);
 
     return this.suppliesRepository.manager.transaction(async (manager) => {
-      const supply = manager.create(Supply, { name, unit });
+      const supply = manager.create(Supply, { name, unit, user });
       await manager.save(Supply, supply);
 
       const calculatedCostPerUnit = totalPaid / initialQuantity;
@@ -62,6 +63,7 @@ export class SuppliesService {
         initialQuantity: quantity,
         remainingQuantity: quantity,
         costPerUnit: String(calculatedCostPerUnit),
+        user
       });
       await manager.save(InventoryBatch, batch);
 
@@ -70,8 +72,9 @@ export class SuppliesService {
     });
   }
 
-  async findAll(): Promise<SupplyWithTotalAvailable[]> {
+  async findAll(user: User): Promise<SupplyWithTotalAvailable[]> {
     const supplies = await this.suppliesRepository.find({
+      where: { user: { id: user.id } },
       order: { id: 'ASC' },
       relations: { batches: true },
     });
@@ -81,54 +84,47 @@ export class SuppliesService {
   async addBatch(
     supplyId: number,
     createBatchDto: CreateBatchDto,
+    user: User
   ): Promise<InventoryBatch> {
 
     if (!createBatchDto.supplyFormatId && !createBatchDto.initialQuantity) {
       throw new BadRequestException('Debes proporcionar un formatId o una initialQuantity');
     }
 
-    // 1. Validar que el insumo exista
     const supply = await this.suppliesRepository.findOne({
-      where: { id: supplyId },
+      where: { id: supplyId, user: { id: user.id } },
     });
     if (!supply) {
       throw new NotFoundException(`Supply #${supplyId} not found`);
     }
 
-    // 2. Buscar la tienda (si viene en el DTO)
     let store: Store | undefined = undefined;
     if (createBatchDto.storeId) {
-      store = await this.storesService.findOne(createBatchDto.storeId);
+      store = await this.storesService.findOne(createBatchDto.storeId, user);
     }
 
-    // 3. Determinar la CANTIDAD (Prioridad: Formato > Manual)
     let finalQuantity = Number(createBatchDto.initialQuantity);
 
     if (createBatchDto.supplyFormatId) {
       const format = await this.supplyFormatsRepository.findOne({
-        where: { id: createBatchDto.supplyFormatId },
+        where: { id: createBatchDto.supplyFormatId, user: { id: user.id } },
       });
       if (!format) {
         throw new NotFoundException(`Format #${createBatchDto.supplyFormatId} not found`);
       }
-      // Si hay formato, usamos su cantidad (ej. 900)
       finalQuantity = Number(format.quantity);
     }
 
-    // 4. Calcular el COSTO POR UNIDAD BASE (gr/ml/und)
-    // Si pagaste 10$ por 900g, el costo unitario es 10 / 900 = 0.0111
-    // Esto es lo que permite que el FIFO funcione aunque cambies de marca
     const totalPaid = Number(createBatchDto.totalPaid);
     const costPerUnitBase = totalPaid / finalQuantity;
 
-    // 5. Crear el lote
     const batch = this.inventoryBatchesRepository.create({
       supply,
       store,
       initialQuantity: String(finalQuantity),
       remainingQuantity: String(finalQuantity),
       costPerUnit: String(costPerUnitBase),
-      // Podrías guardar el supplyFormatId aquí también si quisieras trazabilidad total
+      user
     });
 
     return await this.inventoryBatchesRepository.save(batch);
@@ -137,9 +133,10 @@ export class SuppliesService {
   async addConversion(
     supplyId: number,
     dto: CreateUnitConversionDto,
+    user: User
   ): Promise<UnitConversion> {
     const supply = await this.suppliesRepository.findOne({
-      where: { id: supplyId },
+      where: { id: supplyId, user: { id: user.id } },
     });
     if (!supply) {
       throw new NotFoundException(`Supply #${supplyId} not found`);
@@ -149,6 +146,7 @@ export class SuppliesService {
       name: dto.name,
       factor: String(dto.factor),
       supply,
+      user
     });
 
     return this.unitConversionsRepository.save(conversion);
@@ -157,9 +155,10 @@ export class SuppliesService {
   async updateConversion(
     conversionId: number,
     dto: UpdateUnitConversionDto,
+    user: User
   ): Promise<UnitConversion> {
     const conversion = await this.unitConversionsRepository.findOne({
-      where: { id: conversionId },
+      where: { id: conversionId, user: { id: user.id } },
     });
     if (!conversion) {
       throw new NotFoundException(
@@ -177,9 +176,9 @@ export class SuppliesService {
     return this.unitConversionsRepository.save(conversion);
   }
 
-  async removeConversion(conversionId: number): Promise<void> {
+  async removeConversion(conversionId: number, user: User): Promise<void> {
     const conversion = await this.unitConversionsRepository.findOne({
-      where: { id: conversionId },
+      where: { id: conversionId, user: { id: user.id } },
     });
     if (!conversion) {
       throw new NotFoundException(
@@ -300,9 +299,9 @@ export class SuppliesService {
     return null;
   }
 
-  async findOne(id: number): Promise<SupplyWithTotalAvailable> {
+  async findOne(id: number, user: User): Promise<SupplyWithTotalAvailable> {
     const supply = await this.suppliesRepository.findOne({
-      where: { id },
+      where: { id, user: { id: user.id } },
       relations: { batches: { store: true }, unitConversions: true },
     });
     if (!supply) {
@@ -315,6 +314,7 @@ export class SuppliesService {
     supplyId: number,
     amount: number,
     unitName: string,
+    user: User
   ): Promise<number> {
     if (amount < 0) {
       throw new BadRequestException('amount must be >= 0');
@@ -322,7 +322,7 @@ export class SuppliesService {
 
     const normalizedUnitName = unitName.trim().toLowerCase();
     const supply = await this.suppliesRepository.findOne({
-      where: { id: supplyId },
+      where: { id: supplyId, user: { id: user.id } },
     });
     if (!supply) {
       throw new NotFoundException(`Supply #${supplyId} not found`);
@@ -356,6 +356,7 @@ export class SuppliesService {
   async processConsumption(
     supplyId: number,
     quantityToConsume: number,
+    user: User,
     executeDiscount: boolean,
   ): Promise<ConsumptionResult> {
     if (quantityToConsume < 0) {
@@ -366,7 +367,7 @@ export class SuppliesService {
     }
 
     const supplyRow = await this.suppliesRepository.findOne({
-      where: { id: supplyId },
+      where: { id: supplyId, user: { id: user.id } },
       select: { id: true },
     });
     if (!supplyRow) {
@@ -379,6 +380,7 @@ export class SuppliesService {
           const batches = await this.loadPositiveBatchesForFifo(
             manager,
             supplyId,
+            user,
             true,
           );
           const { touched, ...result } = this.fifoAllocate(
@@ -402,6 +404,7 @@ export class SuppliesService {
     const batches = await this.loadPositiveBatchesForFifo(
       this.inventoryBatchesRepository.manager,
       supplyId,
+      user,
       false,
     );
     const { touched: _touched, ...result } = this.fifoAllocate(
@@ -414,17 +417,18 @@ export class SuppliesService {
   async getSupplyPricing(
     id: number,
     quantity: number,
+    user: User,
     unitName?: string,
   ): Promise<SupplyPricingResult> {
     if (quantity < 0) {
       throw new BadRequestException('quantity must be >= 0');
     }
     const quantityInBaseUnit = unitName
-      ? await this.getAmountInBaseUnit(id, quantity, unitName)
+      ? await this.getAmountInBaseUnit(id, quantity, unitName, user)
       : quantity;
 
     const supplyRow = await this.suppliesRepository.findOne({
-      where: { id },
+      where: { id, user: { id: user.id } },
       select: { id: true },
     });
     if (!supplyRow) {
@@ -434,6 +438,7 @@ export class SuppliesService {
     const batchesWithStock = await this.loadPositiveBatchesForFifo(
       this.inventoryBatchesRepository.manager,
       id,
+      user,
       false,
     );
 
@@ -451,6 +456,7 @@ export class SuppliesService {
     const latestBatch = await this.inventoryBatchesRepository
       .createQueryBuilder('batch')
       .where('batch.supplyId = :id', { id })
+      .andWhere('batch.user_id = :userId', { userId: user.id })
       .orderBy('batch.createdAt', 'DESC')
       .getOne();
 
@@ -481,11 +487,13 @@ export class SuppliesService {
   private async loadPositiveBatchesForFifo(
     manager: EntityManager,
     supplyId: number,
+    user: User,
     forUpdate: boolean,
   ): Promise<InventoryBatch[]> {
     const qb = manager
       .createQueryBuilder(InventoryBatch, 'batch')
       .where('batch.supplyId = :supplyId', { supplyId })
+      .andWhere('batch.user_id = :userId', { userId: user.id })
       .andWhere('"batch"."remainingQuantity"::numeric > 0')
       .orderBy('batch.createdAt', 'ASC');
     if (forUpdate) {
@@ -537,14 +545,14 @@ export class SuppliesService {
     };
   }
 
-  async update(id: number, updateSupplyDto: UpdateSupplyDto) {
-    const supply = await this.findOne(id);
+  async update(id: number, updateSupplyDto: UpdateSupplyDto, user: User) {
+    const supply = await this.findOne(id, user);
     this.suppliesRepository.merge(supply, updateSupplyDto);
     return this.suppliesRepository.save(supply);
   }
 
-  async remove(id: number) {
-    const supply = await this.findOne(id);
+  async remove(id: number, user: User) {
+    const supply = await this.findOne(id, user);
     await this.suppliesRepository.remove(supply);
   }
 
@@ -552,15 +560,13 @@ export class SuppliesService {
     supplyId: number,
     amount: number,
     unit: string,
-    manager: EntityManager
+    manager: EntityManager,
+    user: User
   ): Promise<SupplyPricingResult> {
-    // 1. REUSO: Conversión de unidades
-    const quantityInBaseUnit = await this.getAmountInBaseUnit(supplyId, amount, unit);
+    const quantityInBaseUnit = await this.getAmountInBaseUnit(supplyId, amount, unit, user);
   
-    // 2. REUSO: Carga de lotes con bloqueo (pessimistic_write) para evitar colisiones
-    const batches = await this.loadPositiveBatchesForFifo(manager, supplyId, true);
+    const batches = await this.loadPositiveBatchesForFifo(manager, supplyId, user, true);
   
-    // 3. REUSO: Lógica FIFO (calcula costos y prepara los registros 'touched')
     const { totalCost: fifoCost, insufficientStock, touched } = this.fifoAllocate(
       batches,
       quantityInBaseUnit,
@@ -570,7 +576,6 @@ export class SuppliesService {
       throw new BadRequestException(`Stock insuficiente para el insumo ID ${supplyId}`);
     }
   
-    // 4. PERSISTENCIA: Guardamos los cambios que calculó fifoAllocate
     for (const { batch, newRemainingStr } of touched) {
       batch.remainingQuantity = newRemainingStr;
     }
@@ -578,16 +583,14 @@ export class SuppliesService {
       await manager.save(InventoryBatch, touched.map((t) => t.batch));
     }
   
-    // 5. REUSO DE COSTOS: Obtenemos los 3 costos usando tu función actual
-    // (Nota: Como ya estamos en una transacción, esta consulta es segura)
-    const pricing = await this.getSupplyPricing(supplyId, quantityInBaseUnit);
+    const pricing = await this.getSupplyPricing(supplyId, quantityInBaseUnit, user);
   
-    return pricing; // Devolvemos fifoCost, replacementCost y averageCost
+    return pricing;
   }
 
-  async createFormat(dto: CreateSupplyFormatDto) {
+  async createFormat(dto: CreateSupplyFormatDto, user: User) {
     const supply = await this.suppliesRepository.findOne({
-      where: { id: dto.supplyId }
+      where: { id: dto.supplyId, user: { id: user.id } }
     });
 
     if (!supply) {
@@ -598,8 +601,10 @@ export class SuppliesService {
       name: dto.name,
       quantity: String(dto.quantity),
       supply: supply,
+      user
     });
 
     return await this.supplyFormatsRepository.save(format);
   }
 }
+

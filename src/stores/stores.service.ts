@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Store } from './entities/store.entity';
 import { UpdateStoreDto } from './dto/update-store.dto';
+import { User } from '../auth/entities/user.entity';
 
 @Injectable()
 export class StoresService {
@@ -11,29 +12,35 @@ export class StoresService {
     private readonly storesRepository: Repository<Store>,
   ) {}
 
-  async create(dto: any) {
-    const store = this.storesRepository.create(dto);
+  async create(dto: any, user: User) {
+    const store = this.storesRepository.create({ ...dto, user });
     return await this.storesRepository.save(store);
   }
 
-  async findAll() {
-    return await this.storesRepository.find({ order: { name: 'ASC' } });
+  async findAll(user: User) {
+    return await this.storesRepository.find({ 
+      where: { user: { id: user.id } },
+      order: { name: 'ASC' } 
+    });
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user: User) {
     const store = await this.storesRepository.findOne({ 
-        where: { id },
-        relations: ['batches', 'batches.supply'] // Para ver qué has comprado allí
+        where: { id, user: { id: user.id } },
+        relations: ['batches', 'batches.supply']
     });
     if (!store) throw new NotFoundException(`Tienda #${id} no encontrada`);
     return store;
   }
 
-  update(id: number, updateStoreDto: UpdateStoreDto) {
-    return `This action updates a #${id} store`;
+  async update(id: number, updateStoreDto: UpdateStoreDto, user: User) {
+    const store = await this.findOne(id, user);
+    this.storesRepository.merge(store, updateStoreDto);
+    return await this.storesRepository.save(store);
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} store`;
+  async remove(id: number, user: User) {
+    const store = await this.findOne(id, user);
+    return await this.storesRepository.remove(store);
   }
 }

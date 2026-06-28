@@ -1,5 +1,6 @@
-import { Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, OneToMany, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { RecipeIngredient } from './recipe-ingredient.entity';
+import { User } from '../../auth/entities/user.entity';
 
 @Entity('recipes')
 export class Recipe {
@@ -22,4 +23,8 @@ export class Recipe {
     cascade: ['insert', 'update'],
   })
   ingredients: RecipeIngredient[];
+
+  @ManyToOne(() => User, { eager: false, nullable: true })
+  @JoinColumn({ name: 'user_id' })
+  user: User;
 }

@@ -1,6 +1,7 @@
 // src/stores/entities/store.entity.ts
-import { Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, OneToMany, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { InventoryBatch } from '../../supplies/entities/inventory-batch.entity';
+import { User } from '../../auth/entities/user.entity';
 
 @Entity('stores')
 export class Store {
@@ -24,4 +25,8 @@ export class Store {
 
   @OneToMany(() => InventoryBatch, (batch) => batch.store)
   batches: InventoryBatch[];
+
+  @ManyToOne(() => User, { eager: false, nullable: true })
+  @JoinColumn({ name: 'user_id' })
+  user: User;
 }
