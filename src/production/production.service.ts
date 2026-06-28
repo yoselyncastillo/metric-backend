@@ -64,9 +64,13 @@ export class ProductionService {
         finishedProduct.fifoCost = (parseFloat(finishedProduct.fifoCost) + totalFifoCost).toString();
         finishedProduct.averageCost = (parseFloat(finishedProduct.averageCost) + totalAverageCost).toString();
 
-        // Para el Reposición: Siempre nos quedamos con el más nuevo
-        // Porque es el precio que tendrías que pagar HOY para volver a hacerlo
-        finishedProduct.replacementCost = totalReplacementCost.toString();
+        // Para el Reposición: Obtenemos el costo UNITARIO de reposición más reciente
+        // y lo multiplicamos por la NUEVA cantidad total en vitrina.
+        // Así toda tu vitrina se valora al precio de reposición de HOY.
+        if (finalQuantityForStock > 0) {
+          const unitReplacementCost = totalReplacementCost / finalQuantityForStock;
+          finishedProduct.replacementCost = (unitReplacementCost * newQty).toString();
+        }
 
       } else {
         // --- CREACIÓN (Es la primera vez que lo haces) ---
