@@ -20,7 +20,8 @@ export class StoresService {
   async findAll(user: User) {
     return await this.storesRepository.find({ 
       where: { user: { id: user.id } },
-      order: { name: 'ASC' } 
+      order: { name: 'ASC' },
+      relations: ['batches', 'batches.supply']
     });
   }
 

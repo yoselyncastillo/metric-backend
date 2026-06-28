@@ -76,7 +76,7 @@ export class SuppliesService {
     const supplies = await this.suppliesRepository.find({
       where: { user: { id: user.id } },
       order: { id: 'ASC' },
-      relations: { batches: true },
+      relations: { batches: { store: true } },
     });
     return supplies.map((supply) => this.withTotalAvailable(supply));
   }
