@@ -56,18 +56,23 @@ export class SuppliesService {
       const supply = manager.create(Supply, { name, unit, user });
       await manager.save(Supply, supply);
 
-      const calculatedCostPerUnit = totalPaid / initialQuantity;
+      if (initialQuantity && initialQuantity > 0) {
+        const costToUse = totalPaid ?? 0;
+        const calculatedCostPerUnit = costToUse / initialQuantity;
 
-      const batch = manager.create(InventoryBatch, {
-        supply,
-        initialQuantity: quantity,
-        remainingQuantity: quantity,
-        costPerUnit: String(calculatedCostPerUnit),
-        user
-      });
-      await manager.save(InventoryBatch, batch);
+        const batch = manager.create(InventoryBatch, {
+          supply,
+          initialQuantity: quantity,
+          remainingQuantity: quantity,
+          costPerUnit: String(calculatedCostPerUnit),
+          user
+        });
+        await manager.save(InventoryBatch, batch);
 
-      supply.batches = [batch];
+        supply.batches = [batch];
+      } else {
+        supply.batches = [];
+      }
       return supply;
     });
   }

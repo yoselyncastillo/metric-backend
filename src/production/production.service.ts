@@ -5,6 +5,7 @@ import { RecipesService } from 'src/recipes/recipes.service';
 import { SuppliesService } from 'src/supplies/supplies.service';
 import { DataSource } from 'typeorm';
 import { FinishedProduct } from './entities/finished-product.entity';
+import { InventoryBatch } from '../supplies/entities/inventory-batch.entity';
 import { User } from '../auth/entities/user.entity';
 
 @Injectable()
@@ -46,7 +47,27 @@ export class ProductionService {
         totalAverageCost += pricing.averageCost;
       }
 
-      // 2. Actualizar o crear Producto Terminado
+      // 2. Evaluar si es receta intermedia o final
+      if (recipe.isIntermediate) {
+        if (!recipe.associatedSupply) {
+          throw new NotFoundException(`La receta intermedia no tiene un insumo asociado configurado`);
+        }
+
+        const costPerUnit = finalQuantityForStock > 0 ? (totalFifoCost / finalQuantityForStock) : 0;
+
+        const batch = manager.create(InventoryBatch, {
+          supply: recipe.associatedSupply,
+          initialQuantity: finalQuantityForStock.toString(),
+          remainingQuantity: finalQuantityForStock.toString(),
+          costPerUnit: costPerUnit.toString(),
+          user
+        });
+
+        return await manager.save(batch);
+      }
+
+      // --- RECETA FINAL ---
+      // Actualizar o crear Producto Terminado
       let finishedProduct = await manager.findOne(FinishedProduct, {
         where: { recipe: { id: recipeId }, user: { id: user.id } }
       });

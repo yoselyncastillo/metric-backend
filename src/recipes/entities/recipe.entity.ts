@@ -1,4 +1,5 @@
 import { Column, Entity, OneToMany, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { Supply } from '../../supplies/entities/supply.entity';
 import { RecipeIngredient } from './recipe-ingredient.entity';
 import { User } from '../../auth/entities/user.entity';
 
@@ -18,6 +19,16 @@ export class Recipe {
 
   @Column('decimal', { precision: 10, scale: 4, default: '1.4' })
   profitMargin: string;
+
+  @Column({ default: false })
+  isIntermediate: boolean;
+
+  @Column({ nullable: true })
+  category: string;
+
+  @ManyToOne(() => Supply, { nullable: true })
+  @JoinColumn({ name: 'associated_supply_id' })
+  associatedSupply: Supply;
 
   @OneToMany(() => RecipeIngredient, (ingredient) => ingredient.recipe, {
     cascade: ['insert', 'update'],

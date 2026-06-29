@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsNotEmpty, IsNumber, IsPositive, IsString } from 'class-validator';
+import { IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateSupplyDto {
   @IsString()
@@ -9,13 +9,15 @@ export class CreateSupplyDto {
   @IsString()
   unit: string;
 
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
-  @IsPositive()
-  initialQuantity: number;
+  @Min(0)
+  initialQuantity?: number;
 
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
-  @IsPositive()
-  totalPaid: number;
+  @Min(0)
+  totalPaid?: number;
 }

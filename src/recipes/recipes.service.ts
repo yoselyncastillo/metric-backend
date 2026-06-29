@@ -32,6 +32,7 @@ export class RecipesService {
       .createQueryBuilder('recipe')
       .leftJoinAndSelect('recipe.ingredients', 'ingredient')
       .leftJoinAndSelect('ingredient.supply', 'supply')
+      .leftJoinAndSelect('recipe.associatedSupply', 'associatedSupply')
       .where('recipe.id = :id', { id })
       .andWhere('recipe.user_id = :userId', { userId: user.id })
       .getOne();
@@ -51,12 +52,22 @@ export class RecipesService {
   ) {}
 
   async create(createRecipeDto: CreateRecipeDto, user: User) {
-    const { ingredients, ...recipeData } = createRecipeDto;
+    const { ingredients, associatedSupplyId, ...recipeData } = createRecipeDto;
     const ingredientList = ingredients ?? [];
 
     return this.recipesRepository.manager.transaction(async (manager) => {
+      let associatedSupply: Supply | undefined = undefined;
+      if (associatedSupplyId) {
+        const found = await manager.findOneBy(Supply, { id: associatedSupplyId, user: { id: user.id } });
+        if (!found) {
+          throw new BadRequestException(`Associated supply #${associatedSupplyId} not found`);
+        }
+        associatedSupply = found;
+      }
+
       const recipe = manager.create(Recipe, {
         ...recipeData,
+        associatedSupply,
         portions: recipeData.portions ?? 1,
         profitMargin:
           recipeData.profitMargin !== undefined
@@ -96,15 +107,48 @@ export class RecipesService {
     });
   }
 
-  findAll(user: User) {
-    return this.recipesRepository
+  async findAll(user: User) {
+    const recipes = await this.recipesRepository
       .createQueryBuilder('recipe')
       .leftJoinAndSelect('recipe.ingredients', 'ingredient')
       .leftJoinAndSelect('ingredient.supply', 'supply')
+      .leftJoinAndSelect('recipe.associatedSupply', 'associatedSupply')
       .where('recipe.user_id = :userId', { userId: user.id })
       .orderBy('recipe.id', 'ASC')
       .addOrderBy('ingredient.id', 'ASC')
       .getMany();
+
+    return Promise.all(
+      recipes.map(async (recipe) => {
+        let totalFifoCost = 0;
+        let totalReplacementCost = 0;
+        let totalAverageCost = 0;
+
+        for (const item of recipe.ingredients ?? []) {
+          const pricing = await this.suppliesService.getSupplyPricing(
+            item.supply.id,
+            Number(item.quantity),
+            user,
+            item.unit,
+          );
+          totalFifoCost += pricing.fifoCost;
+          totalReplacementCost += pricing.replacementCost;
+          totalAverageCost += pricing.averageCost;
+        }
+
+        const suggestedPrice = totalReplacementCost * Number(recipe.profitMargin);
+
+        return {
+          ...recipe,
+          costSummary: {
+            totalFifoCost,
+            totalReplacementCost,
+            totalAverageCost,
+            suggestedPrice,
+          },
+        };
+      })
+    );
   }
 
   async findOne(id: number, user: User) {
@@ -180,16 +224,71 @@ export class RecipesService {
   }
 
   async update(id: number, updateRecipeDto: UpdateRecipeDto, user: User) {
-    const recipe = await this.findRecipeWithRelations(id, user);
-    const { ingredients: _ignoredIngredients, ...recipePatch } = updateRecipeDto;
-    this.recipesRepository.merge(recipe, {
-      ...recipePatch,
-      profitMargin:
-        recipePatch.profitMargin !== undefined
-          ? String(recipePatch.profitMargin)
-          : recipe.profitMargin,
+    return this.recipesRepository.manager.transaction(async (manager) => {
+      const recipe = await manager.findOne(Recipe, {
+        where: { id, user: { id: user.id } },
+        relations: { ingredients: true, associatedSupply: true }
+      });
+      if (!recipe) throw new NotFoundException(`Recipe #${id} not found`);
+
+      const { ingredients, associatedSupplyId, ...recipePatch } = updateRecipeDto;
+
+      let associatedSupply = recipe.associatedSupply;
+      if (associatedSupplyId !== undefined) {
+         if (associatedSupplyId === null) {
+            associatedSupply = null as any;
+         } else {
+            const found = await manager.findOneBy(Supply, { id: associatedSupplyId, user: { id: user.id } });
+            if (found) associatedSupply = found;
+         }
+      }
+
+      manager.merge(Recipe, recipe, {
+        ...recipePatch,
+        associatedSupply,
+        profitMargin: recipePatch.profitMargin !== undefined ? String(recipePatch.profitMargin) : recipe.profitMargin,
+      });
+
+      await manager.save(Recipe, recipe);
+
+      if (ingredients) {
+         // Find old ingredients and remove them to avoid "Cannot use relation in Delete" error
+         const oldIngredients = await manager.find(RecipeIngredient, { where: { recipe: { id: recipe.id } } });
+         if (oldIngredients.length > 0) {
+           await manager.remove(RecipeIngredient, oldIngredients);
+         }
+
+         // Create new ones
+         const uniqueSupplyIds = [...new Set(ingredients.map((i) => i.supplyId))];
+         const supplies = uniqueSupplyIds.length
+           ? await manager.findBy(Supply, { id: In(uniqueSupplyIds), user: { id: user.id } })
+           : [];
+         const supplyById = new Map(supplies.map((supply) => [supply.id, supply]));
+
+         const ingredientsToSave = ingredients.map((ingredientDto) => {
+           const supply = supplyById.get(ingredientDto.supplyId);
+           if (!supply) throw new BadRequestException(`Supply #${ingredientDto.supplyId} does not exist`);
+           return manager.create(RecipeIngredient, {
+             recipe,
+             supply,
+             quantity: String(ingredientDto.quantity),
+             unit: ingredientDto.unit,
+             user
+           });
+         });
+         
+         if (ingredientsToSave.length > 0) {
+           await manager.save(RecipeIngredient, ingredientsToSave);
+         }
+      }
+
+      const updatedRecipe = await manager.findOne(Recipe, {
+        where: { id: recipe.id, user: { id: user.id } },
+        relations: { ingredients: { supply: true }, associatedSupply: true },
+      });
+      if (!updatedRecipe) throw new NotFoundException();
+      return updatedRecipe;
     });
-    return this.recipesRepository.save(recipe);
   }
 
   async remove(id: number, user: User) {

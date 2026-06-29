@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -45,6 +46,20 @@ export class CreateRecipeDto {
   @IsNumber()
   @IsPositive()
   profitMargin?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isIntermediate?: boolean;
+
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @IsPositive()
+  associatedSupplyId?: number;
 
   @IsArray()
   @ValidateNested({ each: true })
