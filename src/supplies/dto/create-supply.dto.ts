@@ -10,6 +10,10 @@ export class CreateSupplyDto {
   unit: string;
 
   @IsOptional()
+  @IsString()
+  category?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(0)
@@ -20,4 +24,9 @@ export class CreateSupplyDto {
   @IsNumber()
   @Min(0)
   totalPaid?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  storeId?: number;
 }

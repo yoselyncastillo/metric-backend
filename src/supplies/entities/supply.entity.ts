@@ -14,6 +14,9 @@ export class Supply {
   @Column({ length: 32 })
   unit: string;
 
+  @Column({ nullable: true })
+  category?: string;
+
   @OneToMany(() => InventoryBatch, (batch) => batch.supply)
   batches: InventoryBatch[];
 

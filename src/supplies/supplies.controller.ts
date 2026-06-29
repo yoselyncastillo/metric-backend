@@ -125,4 +125,21 @@ export class SuppliesController {
   remove(@Param('id') id: string, @GetUser() user: User) {
     return this.suppliesService.remove(+id, user);
   }
+  @Patch('batches/:batchId')
+  updateBatch(
+    @Param('batchId', ParseIntPipe) batchId: number,
+    @Body() updateDto: { quantity?: number; remainingQuantity?: number; price?: number },
+    @GetUser() user: User
+  ) {
+    return this.suppliesService.updateBatch(batchId, updateDto, user);
+  }
+
+  @Delete('batches/:batchId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeBatch(
+    @Param('batchId', ParseIntPipe) batchId: number,
+    @GetUser() user: User
+  ) {
+    await this.suppliesService.removeBatch(batchId, user);
+  }
 }

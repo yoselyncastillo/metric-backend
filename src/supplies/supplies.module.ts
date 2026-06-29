@@ -4,6 +4,7 @@ import { InventoryBatch } from './entities/inventory-batch.entity';
 import { Supply } from './entities/supply.entity';
 import { UnitConversion } from './entities/unit-conversion.entity';
 import { SuppliesController } from './supplies.controller';
+import { BatchesController } from './batches.controller';
 import { SuppliesService } from './supplies.service';
 import { StoresModule } from 'src/stores/stores.module';
 import { SupplyFormat } from './entities/supply-format.entity';
@@ -13,7 +14,7 @@ import { SupplyFormat } from './entities/supply-format.entity';
     TypeOrmModule.forFeature([Supply, InventoryBatch, UnitConversion, SupplyFormat]),
     StoresModule,
 ],
-  controllers: [SuppliesController],
+  controllers: [SuppliesController, BatchesController],
   providers: [SuppliesService],
   exports: [SuppliesService],
 })

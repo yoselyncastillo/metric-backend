@@ -49,11 +49,16 @@ export class SuppliesService {
   ) { }
 
   async create(createSupplyDto: CreateSupplyDto, user: User): Promise<Supply> {
-    const { name, unit, initialQuantity, totalPaid } = createSupplyDto;
+    const { name, unit, category, initialQuantity, totalPaid, storeId } = createSupplyDto;
     const quantity = String(initialQuantity);
 
+    let store: Store | undefined = undefined;
+    if (storeId) {
+      store = await this.storesService.findOne(storeId, user);
+    }
+
     return this.suppliesRepository.manager.transaction(async (manager) => {
-      const supply = manager.create(Supply, { name, unit, user });
+      const supply = manager.create(Supply, { name, unit, category, user });
       await manager.save(Supply, supply);
 
       if (initialQuantity && initialQuantity > 0) {
@@ -62,6 +67,7 @@ export class SuppliesService {
 
         const batch = manager.create(InventoryBatch, {
           supply,
+          store,
           initialQuantity: quantity,
           remainingQuantity: quantity,
           costPerUnit: String(calculatedCostPerUnit),
@@ -129,7 +135,8 @@ export class SuppliesService {
       initialQuantity: String(finalQuantity),
       remainingQuantity: String(finalQuantity),
       costPerUnit: String(costPerUnitBase),
-      user
+      user,
+      ...(createBatchDto.createdAt ? { createdAt: new Date(createBatchDto.createdAt) } : {})
     });
 
     return await this.inventoryBatchesRepository.save(batch);
@@ -610,6 +617,38 @@ export class SuppliesService {
     });
 
     return await this.supplyFormatsRepository.save(format);
+  }
+
+  async updateBatch(
+    id: number,
+    updateDto: { quantity?: number; remainingQuantity?: number; price?: number },
+    user: User
+  ): Promise<InventoryBatch> {
+    const batch = await this.inventoryBatchesRepository.findOne({
+      where: { id, user: { id: user.id } },
+      relations: ['supply']
+    });
+    if (!batch) throw new NotFoundException(`Batch #${id} not found`);
+
+    if (updateDto.quantity !== undefined) {
+      batch.initialQuantity = String(updateDto.quantity);
+    }
+    if (updateDto.remainingQuantity !== undefined) {
+      batch.remainingQuantity = String(updateDto.remainingQuantity);
+    }
+    if (updateDto.price !== undefined) {
+      batch.costPerUnit = String(updateDto.price);
+    }
+
+    return await this.inventoryBatchesRepository.save(batch);
+  }
+
+  async removeBatch(id: number, user: User): Promise<void> {
+    const batch = await this.inventoryBatchesRepository.findOne({
+      where: { id, user: { id: user.id } }
+    });
+    if (!batch) throw new NotFoundException(`Batch #${id} not found`);
+    await this.inventoryBatchesRepository.remove(batch);
   }
 }
 

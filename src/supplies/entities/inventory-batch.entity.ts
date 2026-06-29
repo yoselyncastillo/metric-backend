@@ -24,7 +24,7 @@ export class InventoryBatch {
   @Column('decimal', { precision: 14, scale: 4 })
   costPerUnit: string;
 
-  @CreateDateColumn({ type: 'timestamptz' })
+  @Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;
 
   @ManyToOne(() => Supply, (supply) => supply.batches, {

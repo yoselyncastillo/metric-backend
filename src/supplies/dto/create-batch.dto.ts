@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsNumber, IsOptional, IsPositive } from 'class-validator';
+import { IsNumber, IsOptional, IsPositive, IsString } from 'class-validator';
 
 export class CreateBatchDto {
   @Type(() => Number)
@@ -22,4 +22,8 @@ export class CreateBatchDto {
   @IsNumber()
   @IsOptional()
   supplyFormatId?: number;
+
+  @IsOptional()
+  @IsString()
+  createdAt?: string;
 }
