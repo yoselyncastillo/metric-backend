@@ -1,5 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn } from "typeorm";
 import { User } from "../../auth/entities/user.entity";
+import { CashClosure } from "../../closures/entities/cash-closure.entity";
 
 export enum ExpenseCategory {
   UTILITIES = 'UTILITIES',
@@ -29,4 +30,8 @@ export class ExtraExpense {
   @ManyToOne(() => User, { eager: false, nullable: true })
   @JoinColumn({ name: 'user_id' })
   user: User;
+
+  @ManyToOne(() => CashClosure, (closure) => closure.extraExpenses, { nullable: true })
+  @JoinColumn({ name: 'closure_id' })
+  closure: CashClosure;
 }

@@ -9,6 +9,7 @@ import {
 import { Supply } from './supply.entity';
 import { Store } from '../../stores/entities/store.entity';
 import { User } from '../../auth/entities/user.entity';
+import { CashClosure } from '../../closures/entities/cash-closure.entity';
 
 @Entity('inventory_batches')
 export class InventoryBatch {
@@ -43,4 +44,8 @@ export class InventoryBatch {
   @ManyToOne(() => User, { eager: false, nullable: true })
   @JoinColumn({ name: 'user_id' })
   user: User;
+
+  @ManyToOne(() => CashClosure, (closure) => closure.inventoryBatches, { nullable: true })
+  @JoinColumn({ name: 'closure_id' })
+  closure: CashClosure;
 }

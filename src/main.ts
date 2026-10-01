@@ -13,7 +13,7 @@ async function bootstrap() {
   );
   app.enableShutdownHooks();
   app.enableCors({
-    origin: 'http://localhost:3000',
+    origin: 'http://localhost:3002',
     credentials: true,
   });
   await app.listen(process.env.PORT ?? 3001);

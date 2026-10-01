@@ -1,10 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { CreateProductionDto } from './dto/create-production.dto';
 import { UpdateProductionDto } from './dto/update-production.dto';
 import { RecipesService } from 'src/recipes/recipes.service';
 import { SuppliesService } from 'src/supplies/supplies.service';
 import { DataSource } from 'typeorm';
-import { FinishedProduct } from './entities/finished-product.entity';
+import { FinishedProduct, ProductLocation } from './entities/finished-product.entity';
 import { InventoryBatch } from '../supplies/entities/inventory-batch.entity';
 import { User } from '../auth/entities/user.entity';
 
@@ -128,8 +128,76 @@ export class ProductionService {
     return `This action returns a #${id} production`;
   }
 
-  update(id: number, updateProductionDto: UpdateProductionDto, user: User) {
-    return `This action updates a #${id} production`;
+  async update(id: number, updateProductionDto: any, user: User) {
+    const repository = this.dataSource.getRepository(FinishedProduct);
+    const finishedProduct = await repository.findOne({
+      where: { id, user: { id: user.id } },
+      relations: ['recipe', 'user', 'closure']
+    });
+
+    if (!finishedProduct) {
+      throw new NotFoundException(`Producto terminado #${id} no encontrado`);
+    }
+
+    const currentQty = parseFloat(finishedProduct.quantity);
+    const moveQty = updateProductionDto.quantity !== undefined ? parseFloat(updateProductionDto.quantity) : currentQty;
+
+    if (moveQty <= 0 || moveQty > currentQty) {
+      throw new BadRequestException('Cantidad a mover inválida');
+    }
+
+    if (moveQty < currentQty) {
+      // Split record
+      const ratio = moveQty / currentQty;
+
+      // Update current record (deduct)
+      finishedProduct.quantity = (currentQty - moveQty).toString();
+      const currentTotalCost = parseFloat(finishedProduct.totalProductionCost);
+      const currentFifoCost = parseFloat(finishedProduct.fifoCost);
+      finishedProduct.totalProductionCost = (currentTotalCost * (1 - ratio)).toFixed(2);
+      finishedProduct.fifoCost = (currentFifoCost * (1 - ratio)).toFixed(2);
+      await repository.save(finishedProduct);
+
+      // Create new record for the moved quantity
+      const newLocation = updateProductionDto.location !== undefined ? updateProductionDto.location : finishedProduct.location;
+
+      const movedProduct = repository.create({
+        ...finishedProduct,
+        id: undefined, // ensure new id
+        quantity: moveQty.toString(),
+        totalProductionCost: (currentTotalCost * ratio).toFixed(2),
+        fifoCost: (currentFifoCost * ratio).toFixed(2),
+        location: newLocation,
+        price: updateProductionDto.price !== undefined ? updateProductionDto.price.toString() : finishedProduct.price,
+        amountPaid: updateProductionDto.amountPaid !== undefined ? updateProductionDto.amountPaid.toString() : '0',
+        amountPending: updateProductionDto.amountPending !== undefined ? updateProductionDto.amountPending.toString() : '0',
+        closure: undefined, // new product shouldn't be attached to an old closure automatically unless specified
+        movedToLocalAt: newLocation === ProductLocation.LOCAL ? new Date() : (newLocation === finishedProduct.location ? finishedProduct.movedToLocalAt : undefined),
+        soldAt: newLocation === ProductLocation.VENDIDO ? new Date() : (newLocation === finishedProduct.location ? finishedProduct.soldAt : undefined),
+      });
+
+      return await repository.save(movedProduct);
+    } else {
+      // Full move, update existing record
+      if (updateProductionDto.location !== undefined && updateProductionDto.location !== finishedProduct.location) {
+        finishedProduct.location = updateProductionDto.location;
+        if (finishedProduct.location === ProductLocation.LOCAL) {
+          finishedProduct.movedToLocalAt = new Date();
+        } else if (finishedProduct.location === ProductLocation.VENDIDO) {
+          finishedProduct.soldAt = new Date();
+        }
+      }
+      if (updateProductionDto.price !== undefined) {
+        finishedProduct.price = updateProductionDto.price.toString();
+      }
+      if (updateProductionDto.amountPaid !== undefined) {
+        finishedProduct.amountPaid = updateProductionDto.amountPaid.toString();
+      }
+      if (updateProductionDto.amountPending !== undefined) {
+        finishedProduct.amountPending = updateProductionDto.amountPending.toString();
+      }
+      return await repository.save(finishedProduct);
+    }
   }
 
   async remove(id: number, user: User) {
