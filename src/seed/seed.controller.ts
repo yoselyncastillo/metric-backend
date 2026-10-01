@@ -11,4 +11,8 @@ export class SeedController {
     return await this.seedService.runSeed();
   }
 
+  @Get('clean')
+  async cleanDB() {
+    return await this.seedService.runClean();
+  }
 }

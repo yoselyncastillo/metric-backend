@@ -79,6 +79,38 @@ export class SeedService {
     };
   }
 
+  async runClean() {
+    this.logger.log('Starting clean process...');
+    const manager = this.dataSource.manager;
+
+    this.logger.log('Clearing database...');
+    await manager.createQueryBuilder().delete().from(ExtraExpense).execute();
+    await manager.createQueryBuilder().delete().from(Customer).execute();
+    await manager.createQueryBuilder().delete().from(FinishedProduct).execute();
+    await manager.createQueryBuilder().delete().from(RecipeIngredient).execute();
+    await manager.createQueryBuilder().delete().from(Recipe).execute();
+    await manager.createQueryBuilder().delete().from(InventoryBatch).execute();
+    await manager.createQueryBuilder().delete().from(UnitConversion).execute();
+    await manager.createQueryBuilder().delete().from(SupplyFormat).execute();
+    await manager.createQueryBuilder().delete().from(Supply).execute();
+    await manager.createQueryBuilder().delete().from(Store).execute();
+    await manager.createQueryBuilder().delete().from(User).execute();
+
+    this.logger.log('Creating base user...');
+    const user1 = manager.create(User, {
+      email: 'yoselyn@metric.com',
+      password: bcrypt.hashSync('Password123!', 10),
+      name: 'Yoselyn Castillo',
+      isActive: true,
+    });
+    await manager.save([user1]);
+
+    return {
+      success: true,
+      message: 'Database completely cleaned. Only base user (yoselyn@metric.com) remains.'
+    };
+  }
+
   private async seedUser(user: User) {
     const manager = this.dataSource.manager;
 

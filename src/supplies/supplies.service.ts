@@ -49,7 +49,7 @@ export class SuppliesService {
   ) { }
 
   async create(createSupplyDto: CreateSupplyDto, user: User): Promise<Supply> {
-    const { name, unit, category, initialQuantity, totalPaid, storeId } = createSupplyDto;
+    const { name, unit, category, initialQuantity, totalPaid, storeId, createdAt } = createSupplyDto;
     const quantity = String(initialQuantity);
 
     let store: Store | undefined = undefined;
@@ -71,7 +71,8 @@ export class SuppliesService {
           initialQuantity: quantity,
           remainingQuantity: quantity,
           costPerUnit: String(calculatedCostPerUnit),
-          user
+          user,
+          ...(createdAt ? { createdAt: new Date(createdAt) } : {})
         });
         await manager.save(InventoryBatch, batch);
 
@@ -565,7 +566,16 @@ export class SuppliesService {
 
   async remove(id: number, user: User) {
     const supply = await this.findOne(id, user);
-    await this.suppliesRepository.remove(supply);
+    try {
+      await this.suppliesRepository.remove(supply);
+    } catch (error: any) {
+      if (error.code === '23503') {
+        throw new BadRequestException(
+          'No se puede eliminar el insumo porque está siendo utilizado en una o más recetas. Por favor, elimínelo de las recetas primero.',
+        );
+      }
+      throw error;
+    }
   }
 
   async decreaseStock(

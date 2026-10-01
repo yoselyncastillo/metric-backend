@@ -293,7 +293,22 @@ export class RecipesService {
 
   async remove(id: number, user: User) {
     const recipe = await this.findRecipeWithRelations(id, user);
-    await this.recipesRepository.remove(recipe);
+    
+    // Remove ingredients manually to avoid "Cannot use relation in Delete" TypeORM errors
+    if (recipe.ingredients && recipe.ingredients.length > 0) {
+      await this.recipeIngredientsRepository.remove(recipe.ingredients);
+    }
+    
+    try {
+      await this.recipesRepository.remove(recipe);
+    } catch (error: any) {
+      if (error.code === '23503') {
+        throw new BadRequestException(
+          'No se puede eliminar la receta porque está enlazada a un producto final u otro registro importante. Elimine las referencias primero.',
+        );
+      }
+      throw error;
+    }
   }
 
   get pricingEngine(): SuppliesService {

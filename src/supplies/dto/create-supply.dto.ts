@@ -29,4 +29,8 @@ export class CreateSupplyDto {
   @Type(() => Number)
   @IsNumber()
   storeId?: number;
+
+  @IsOptional()
+  @IsString()
+  createdAt?: string;
 }

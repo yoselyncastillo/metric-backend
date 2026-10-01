@@ -132,7 +132,17 @@ export class ProductionService {
     return `This action updates a #${id} production`;
   }
 
-  remove(id: number, user: User) {
-    return `This action removes a #${id} production`;
+  async remove(id: number, user: User) {
+    const repository = this.dataSource.getRepository(FinishedProduct);
+    const finishedProduct = await repository.findOne({
+      where: { id, user: { id: user.id } }
+    });
+    
+    if (!finishedProduct) {
+      throw new NotFoundException(`Producto terminado #${id} no encontrado`);
+    }
+
+    await repository.remove(finishedProduct);
+    return { message: `Producto terminado #${id} eliminado correctamente` };
   }
 }
